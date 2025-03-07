@@ -449,3 +449,48 @@ int sys_hello(void)
 	return 0;
 }
 
+int 
+sys_lseek(void)
+{
+    cprintf("Entered into lseek system call.\n");
+    struct file *f;
+    int fd, offset, whence;
+    
+    if(argfd(0, &fd, &f) < 0 || argint(1, &offset) < 0 || argint(2, &whence) < 0){
+        cprintf("Error in arguments.\n");
+        return -1;
+    }
+    
+    uint offset_temp;
+    uint filesize;
+    
+    filesize = f->ip->size;
+    
+    switch(whence){
+        case 0: // SEEK_SET
+            offset_temp = 0;
+            break;
+        case 1: // SEEK_CUR
+            offset_temp = f->off;
+            break;
+        case 2: // SEEK_END
+            offset_temp = filesize;
+            break;
+        default:
+            cprintf("default\n");
+            return -1;
+    }
+    
+    if(((offset_temp + offset) < 0) || ((offset_temp + offset) > filesize)){
+        cprintf("Incorrect Offset.\n");
+        return -1;
+    }
+    
+    cprintf("Changing the file offset.\n");
+    cprintf("Offset before change:- %d\n",f->off);
+    f->off = offset_temp + offset;
+    cprintf("Offset after change:- %d\n",f->off);
+    cprintf("File offset changed.\n");
+    return f->off;
+}
+
