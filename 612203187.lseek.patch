@@ -1,0 +1,250 @@
+diff --git a/Makefile b/Makefile
+index 09d790c..afd2228 100644
+--- a/Makefile
++++ b/Makefile
+@@ -181,6 +181,8 @@ UPROGS=\
+ 	_usertests\
+ 	_wc\
+ 	_zombie\
++	_hello\
++	_lseek\
+ 
+ fs.img: mkfs README $(UPROGS)
+ 	./mkfs fs.img README $(UPROGS)
+diff --git a/hello.c b/hello.c
+new file mode 100644
+index 0000000..afb55a4
+--- /dev/null
++++ b/hello.c
+@@ -0,0 +1,12 @@
++#include "types.h"
++#include "stat.h"
++#include "user.h"
++#include "fs.h"
++
++int 
++main(int argc , char* argv[])
++{
++	hello();
++	exit();
++}
++
+diff --git a/lseek.c b/lseek.c
+new file mode 100644
+index 0000000..c3b873c
+--- /dev/null
++++ b/lseek.c
+@@ -0,0 +1,96 @@
++#include "types.h"
++#include "stat.h"
++#include "user.h"
++#include "fcntl.h"
++
++#define SEEK_SET 0
++#define SEEK_CUR 1
++#define SEEK_END 2
++
++int
++main(void)
++{
++  int fd, ret1,ret2,ret3, n;
++  char buf1[128],buf2[128],buf3[128];
++  int offset1,offset2,offset3, whence1,whence2,whence3;
++  char *filename = "testfile.txt"; // Hard-coded file name
++
++  // Hard-code the parameters.
++  offset1 = 5; 
++  offset2 = -3;
++  offset3 = -5;      // For example, seek to 10 bytes from the start
++  whence1 = SEEK_SET; // Using SEEK_SET (from the beginning)
++  whence2 = SEEK_CUR;
++  whence3 = SEEK_END;
++
++  // Open the file in read-only mode.
++  fd = open(filename, O_RDONLY);
++  if(fd < 0){
++    printf(1, "Error: cannot open %s\n", filename);
++    exit();
++  }
++
++  // Call lseek with the given offset and whence for SEEK SET
++  ret1 = lseek(fd, offset1, whence1);
++  printf(1, "Returned from lseek system call.\n");
++  if(ret1 < 0){
++    printf(1, "lseek failed\n");
++    close(fd);
++    exit();
++  }
++  printf(1, "After lseek: new file offset = %d\n", ret1);
++
++  // Read data starting at the new offset.
++  n = read(fd, buf1, sizeof(buf1)-1);
++  if(n < 0){
++    printf(1, "read failed\n");
++    close(fd);
++    exit();
++  }
++  buf1[n] = '\0';
++  printf(1, "Data read from file for SEEK SET:%s\n", buf1);
++
++  // Call lseek with the given offset and whence for SEEK CUR
++  ret2 = lseek(fd, offset2, whence2);
++  printf(1, "Returned from lseek system call.\n");
++  if(ret2 < 0){
++    printf(1, "lseek failed\n");
++    close(fd);
++    exit();
++  }
++  printf(1, "After lseek: new file offset = %d\n", ret2);
++
++  // Read data starting at the new offset.
++  n = read(fd, buf2, sizeof(buf2)-1);
++  if(n < 0){
++    printf(1, "read failed\n");
++    close(fd);
++    exit();
++  }
++  buf2[n] = '\0';
++  printf(1, "Data read from file for SEEK CUR:%s\n", buf2);
++
++  // Call lseek with the given offset and whence for SEEK END
++  ret3 = lseek(fd, offset3, whence3);
++  printf(1, "Returned from lseek system call.\n");
++  if(ret3 < 0){
++    printf(1, "lseek failed\n");
++    close(fd);
++    exit();
++  }
++  printf(1, "After lseek: new file offset = %d\n", ret2);
++
++  // Read data starting at the new offset.
++  n = read(fd, buf3, sizeof(buf2)-1);
++  if(n < 0){
++    printf(1, "read failed\n");
++    close(fd);
++    exit();
++  }
++  buf3[n] = '\0';
++  printf(1, "Data read from file for SEEK END:%s\n", buf3);
++
++
++  close(fd);
++  exit();
++}
+diff --git a/syscall.c b/syscall.c
+index ee85261..a5e3ee7 100644
+--- a/syscall.c
++++ b/syscall.c
+@@ -103,6 +103,8 @@ extern int sys_unlink(void);
+ extern int sys_wait(void);
+ extern int sys_write(void);
+ extern int sys_uptime(void);
++extern int sys_hello(void);
++extern int sys_lseek(void);
+ 
+ static int (*syscalls[])(void) = {
+ [SYS_fork]    sys_fork,
+@@ -126,6 +128,8 @@ static int (*syscalls[])(void) = {
+ [SYS_link]    sys_link,
+ [SYS_mkdir]   sys_mkdir,
+ [SYS_close]   sys_close,
++[SYS_hello]   sys_hello,
++[SYS_lseek]   sys_lseek,
+ };
+ 
+ void
+diff --git a/syscall.h b/syscall.h
+index bc5f356..5fc3cbe 100644
+--- a/syscall.h
++++ b/syscall.h
+@@ -20,3 +20,5 @@
+ #define SYS_link   19
+ #define SYS_mkdir  20
+ #define SYS_close  21
++#define SYS_hello  22
++#define SYS_lseek  23
+diff --git a/sysfile.c b/sysfile.c
+index bfe61b7..1a32987 100644
+--- a/sysfile.c
++++ b/sysfile.c
+@@ -442,3 +442,55 @@ sys_pipe(void)
+   fd[1] = fd1;
+   return 0;
+ }
++
++int sys_hello(void)
++{
++	cprintf("hello system call in xv6.\n");
++	return 0;
++}
++
++int 
++sys_lseek(void)
++{
++    cprintf("Entered into lseek system call.\n");
++    struct file *f;
++    int fd, offset, whence;
++    
++    if(argfd(0, &fd, &f) < 0 || argint(1, &offset) < 0 || argint(2, &whence) < 0){
++        cprintf("Error in arguments.\n");
++        return -1;
++    }
++    
++    uint offset_temp;
++    uint filesize;
++    
++    filesize = f->ip->size;
++    
++    switch(whence){
++        case 0: // SEEK_SET
++            offset_temp = 0;
++            break;
++        case 1: // SEEK_CUR
++            offset_temp = f->off;
++            break;
++        case 2: // SEEK_END
++            offset_temp = filesize;
++            break;
++        default:
++            cprintf("default\n");
++            return -1;
++    }
++    
++    if(((offset_temp + offset) < 0) || ((offset_temp + offset) > filesize)){
++        cprintf("Incorrect Offset.\n");
++        return -1;
++    }
++    
++    cprintf("Changing the file offset.\n");
++    cprintf("Offset before change:- %d\n",f->off);
++    f->off = offset_temp + offset;
++    cprintf("Offset after change:- %d\n",f->off);
++    cprintf("File offset changed.\n");
++    return f->off;
++}
++
+diff --git a/user.h b/user.h
+index 4f99c52..9ff78b6 100644
+--- a/user.h
++++ b/user.h
+@@ -23,6 +23,9 @@ int getpid(void);
+ char* sbrk(int);
+ int sleep(int);
+ int uptime(void);
++int hello(void);
++int lseek(int fd,int offset,int whence);
++
+ 
+ // ulib.c
+ int stat(const char*, struct stat*);
+diff --git a/usys.S b/usys.S
+index 8bfd8a1..acb6163 100644
+--- a/usys.S
++++ b/usys.S
+@@ -29,3 +29,6 @@ SYSCALL(getpid)
+ SYSCALL(sbrk)
+ SYSCALL(sleep)
+ SYSCALL(uptime)
++SYSCALL(hello)
++SYSCALL(lseek)
++
