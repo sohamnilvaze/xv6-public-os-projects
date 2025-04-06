@@ -2,13 +2,22 @@
 // File descriptors
 //
 
-#include "types.h"
+// #include "types.h"
 #include "defs.h"
 #include "param.h"
 #include "fs.h"
-#include "spinlock.h"
-#include "sleeplock.h"
-#include "file.h"
+// #include "spinlock.h"
+// #include "sleeplock.h"
+// #include "file.h"
+#include "slab.h"
+
+struct slab_cache file_cache;
+
+void init_file_allocator(struct slab_cache * cache)
+{
+    slab_cache_init(cache,sizeof(struct file));
+}
+
 
 struct devsw devsw[NDEV];
 struct {
@@ -20,24 +29,33 @@ void
 fileinit(void)
 {
   initlock(&ftable.lock, "ftable");
+  init_file_allocator(&file_cache);
 }
 
 // Allocate a file structure.
 struct file*
 filealloc(void)
 {
-  struct file *f;
+  // struct file *f;
 
-  acquire(&ftable.lock);
-  for(f = ftable.file; f < ftable.file + NFILE; f++){
-    if(f->ref == 0){
-      f->ref = 1;
-      release(&ftable.lock);
-      return f;
-    }
+  // acquire(&ftable.lock);
+  // for(f = ftable.file; f < ftable.file + NFILE; f++){
+  //   if(f->ref == 0){
+  //     f->ref = 1;
+  //     release(&ftable.lock);
+  //     return f;
+  //   }
+  // }
+  // release(&ftable.lock);
+  // return 0;
+
+  struct file * f = (struct file * )file_alloc(&file_cache);
+  if(f == 0)
+  {
+    return 0;
   }
-  release(&ftable.lock);
-  return 0;
+  f->ref = 1;
+  return f;
 }
 
 // Increment ref count for file f.
@@ -68,6 +86,7 @@ fileclose(struct file *f)
   ff = *f;
   f->ref = 0;
   f->type = FD_NONE;
+  free_file(&file_cache,(char *)f);
   release(&ftable.lock);
 
   if(ff.type == FD_PIPE)
