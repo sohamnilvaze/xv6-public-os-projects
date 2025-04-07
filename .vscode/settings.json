@@ -1,5 +1,7 @@
 {
     "files.associations": {
-        "file.h": "c"
+        "file.h": "c",
+        "spinlock.h": "c",
+        "slab.h": "c"
     }
 }

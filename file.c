@@ -2,13 +2,13 @@
 // File descriptors
 //
 
-// #include "types.h"
+#include "types.h"
 #include "defs.h"
 #include "param.h"
 #include "fs.h"
-// #include "spinlock.h"
-// #include "sleeplock.h"
-// #include "file.h"
+#include "spinlock.h"
+#include "sleeplock.h"
+#include "file.h"
 #include "slab.h"
 
 struct slab_cache file_cache;

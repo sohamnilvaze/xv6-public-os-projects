@@ -1,0 +1,306 @@
+diff --git a/Makefile b/Makefile
+index afd2228..429b3d0 100644
+--- a/Makefile
++++ b/Makefile
+@@ -27,6 +27,7 @@ OBJS = \
+ 	uart.o\
+ 	vectors.o\
+ 	vm.o\
++	slab.o\
+ 
+ # Cross-compiling (e.g., on Mac OS X)
+ # TOOLPREFIX = i386-jos-elf
+@@ -76,7 +77,7 @@ AS = $(TOOLPREFIX)gas
+ LD = $(TOOLPREFIX)ld
+ OBJCOPY = $(TOOLPREFIX)objcopy
+ OBJDUMP = $(TOOLPREFIX)objdump
+-CFLAGS = -fno-pic -static -fno-builtin -fno-strict-aliasing -O2 -Wall -MD -ggdb -m32 -Werror -fno-omit-frame-pointer
++CFLAGS = -fno-pic -static -fno-builtin -fno-strict-aliasing -O2 -Wall -MD -ggdb -m32 -fno-omit-frame-pointer
+ CFLAGS += $(shell $(CC) -fno-stack-protector -E -x c /dev/null >/dev/null 2>&1 && echo -fno-stack-protector)
+ ASFLAGS = -m32 -gdwarf-2 -Wa,-divide
+ # FreeBSD ld wants ``elf_i386_fbsd''
+diff --git a/file.c b/file.c
+index 24b32c2..496ef23 100644
+--- a/file.c
++++ b/file.c
+@@ -9,6 +9,15 @@
+ #include "spinlock.h"
+ #include "sleeplock.h"
+ #include "file.h"
++#include "slab.h"
++
++struct slab_cache file_cache;
++
++void init_file_allocator(struct slab_cache * cache)
++{
++    slab_cache_init(cache,sizeof(struct file));
++}
++
+ 
+ struct devsw devsw[NDEV];
+ struct {
+@@ -20,24 +29,33 @@ void
+ fileinit(void)
+ {
+   initlock(&ftable.lock, "ftable");
++  init_file_allocator(&file_cache);
+ }
+ 
+ // Allocate a file structure.
+ struct file*
+ filealloc(void)
+ {
+-  struct file *f;
+-
+-  acquire(&ftable.lock);
+-  for(f = ftable.file; f < ftable.file + NFILE; f++){
+-    if(f->ref == 0){
+-      f->ref = 1;
+-      release(&ftable.lock);
+-      return f;
+-    }
++  // struct file *f;
++
++  // acquire(&ftable.lock);
++  // for(f = ftable.file; f < ftable.file + NFILE; f++){
++  //   if(f->ref == 0){
++  //     f->ref = 1;
++  //     release(&ftable.lock);
++  //     return f;
++  //   }
++  // }
++  // release(&ftable.lock);
++  // return 0;
++
++  struct file * f = (struct file * )file_alloc(&file_cache);
++  if(f == 0)
++  {
++    return 0;
+   }
+-  release(&ftable.lock);
+-  return 0;
++  f->ref = 1;
++  return f;
+ }
+ 
+ // Increment ref count for file f.
+@@ -68,6 +86,7 @@ fileclose(struct file *f)
+   ff = *f;
+   f->ref = 0;
+   f->type = FD_NONE;
++  free_file(&file_cache,(char *)f);
+   release(&ftable.lock);
+ 
+   if(ff.type == FD_PIPE)
+diff --git a/kalloc.c b/kalloc.c
+index 24f2d47..14cd4f4 100644
+--- a/kalloc.c
++++ b/kalloc.c
+@@ -1,97 +1,96 @@
+-// // Physical memory allocator, intended to allocate
+-// // memory for user processes, kernel stacks, page table pages,
+-// // and pipe buffers. Allocates 4096-byte pages.
+-
+-//New Code starts from here
++// Physical memory allocator, intended to allocate
++// memory for user processes, kernel stacks, page table pages,
++// and pipe buffers. Allocates 4096-byte pages.
+ 
+ #include "types.h"
+ #include "defs.h"
+ #include "param.h"
+-#include "memlayout.h" 
++#include "memlayout.h"
+ #include "mmu.h"
+ #include "spinlock.h"
+ 
+-#define MAX_PAGES 524288
+-
+-void freerange(void* vstart,void* vend);
+-extern char end[];
+-
+-struct{
+-    struct spinlock lock;
+-    int use_lock;
+-    char* free_pages[MAX_PAGES];
+-    int top;
+-}kmem;
+-
+-void kinit1(void* vstart,void* vend)
++void freerange(void *vstart, void *vend);
++extern char end[]; // first address after kernel loaded from ELF file
++                   // defined by the kernel linker script in kernel.ld
++
++struct run {
++  struct run *next;
++};
++
++struct {
++  struct spinlock lock;
++  int use_lock;
++  struct run *freelist;
++} kmem;
++
++// Initialization happens in two phases.
++// 1. main() calls kinit1() while still using entrypgdir to place just
++// the pages mapped by entrypgdir on free list.
++// 2. main() calls kinit2() with the rest of the physical pages
++// after installing a full page table that maps them on all cores.
++void
++kinit1(void *vstart, void *vend)
+ {
+-    initlock(&kmem.lock,"kmem");
+-    kmem.use_lock = 0;
+-    kmem.top = 0;
+-    freerange(vstart,vend);
++  initlock(&kmem.lock, "kmem");
++  kmem.use_lock = 0;
++  freerange(vstart, vend);
+ }
+ 
+-void kinit2(void* vstart,void*vend)
++void
++kinit2(void *vstart, void *vend)
+ {
+-    freerange(vstart,vend);
+-    kmem.use_lock = 1;
++  freerange(vstart, vend);
++  kmem.use_lock = 1;
+ }
+ 
+-void freerange(void* vstart,void* vend)
++void
++freerange(void *vstart, void *vend)
+ {
+-    char* p;
+-    p = (char*)PGROUNDUP((uint)vstart);
+-    for(; p + PGSIZE <= (char*)vend; p += PGSIZE)
+-    {
+-        kfree(p);
+-    }
++  char *p;
++  p = (char*)PGROUNDUP((uint)vstart);
++  for(; p + PGSIZE <= (char*)vend; p += PGSIZE)
++    kfree(p);
+ }
+-
+-void kfree(char* v)
++//PAGEBREAK: 21
++// Free the page of physical memory pointed at by v,
++// which normally should have been returned by a
++// call to kalloc().  (The exception is when
++// initializing the allocator; see kinit above.)
++void
++kfree(char *v)
+ {
+-    if((uint)v % PGSIZE || v < end || V2P(v) >= PHYSTOP)
+-    panic("kfree");
++  struct run *r;
+ 
+-    // Fill with junk to catch dangling refs.
+-    memset(v, 1, PGSIZE);
++  if((uint)v % PGSIZE || v < end || V2P(v) >= PHYSTOP)
++    panic("kfree");
+ 
+-    if(kmem.use_lock)
+-    {
+-        acquire(&kmem.lock);
+-    }
+-    
+-    if(kmem.top < MAX_PAGES)
+-    {
+-        kmem.free_pages[kmem.top++] = v;
+-    }
+-    else
+-    {
+-        panic("kfree: No free space");
+-    }
+-    if(kmem.use_lock)
+-    {
+-        release(&kmem.lock);
+-    }
++  // Fill with junk to catch dangling refs.
++  memset(v, 1, PGSIZE);
+ 
++  if(kmem.use_lock)
++    acquire(&kmem.lock);
++  r = (struct run*)v;
++  r->next = kmem.freelist;
++  kmem.freelist = r;
++  if(kmem.use_lock)
++    release(&kmem.lock);
+ }
+ 
+-char* kalloc(void)
++// Allocate one 4096-byte page of physical memory.
++// Returns a pointer that the kernel can use.
++// Returns 0 if the memory cannot be allocated.
++char*
++kalloc(void)
+ {
+-    char* r = 0;
+-
+-    if(kmem.use_lock)
+-    {
+-        acquire(&kmem.lock);
+-    }
+-    if(kmem.top > 0)
+-    {
+-        r = kmem.free_pages[--kmem.top];
+-    }
+-    if(kmem.use_lock)
+-    {
+-        release(&kmem.lock);
+-    }
+-
+-    return r;
++  struct run *r;
++
++  if(kmem.use_lock)
++    acquire(&kmem.lock);
++  r = kmem.freelist;
++  if(r)
++    kmem.freelist = r->next;
++  if(kmem.use_lock)
++    release(&kmem.lock);
++  return (char*)r;
+ }
+ 
+diff --git a/slab.h b/slab.h
+new file mode 100644
+index 0000000..b4666e3
+--- /dev/null
++++ b/slab.h
+@@ -0,0 +1,32 @@
++#define no_of_files_in_slab PGSIZE / sizeof(struct file)
++
++struct slab{
++    struct slab * next;
++    void * start_address;
++    uint free_count;
++    uint total_files;
++    int * ref;
++};
++
++struct slab_cache{
++    struct spinlock lock;
++    struct slab * slab_list;
++    uint file_size;
++    uint slab_size;
++};
++
++
++void slab_free(struct slab_cache *cache, struct slab *s);
++
++void slab_cache_init(struct slab_cache * cache,uint file_size);
++
++struct slab * slab_init(struct slab_cache * cache);
++
++char * file_alloc(struct slab_cache * cache);
++
++void free_file(struct slab_cache * cache , char * addr);
++
++
++
++
++
