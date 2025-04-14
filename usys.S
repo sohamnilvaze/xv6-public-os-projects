@@ -31,4 +31,6 @@ SYSCALL(sleep)
 SYSCALL(uptime)
 SYSCALL(hello)
 SYSCALL(lseek)
+SYSCALL(cps)
+SYSCALL(chpr)
 

@@ -25,6 +25,8 @@ int sleep(int);
 int uptime(void);
 int hello(void);
 int lseek(int fd,int offset,int whence);
+int cps(void);
+int chpr(int pid,int priority);
 
 
 // ulib.c

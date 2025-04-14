@@ -22,3 +22,5 @@
 #define SYS_close  21
 #define SYS_hello  22
 #define SYS_lseek  23
+#define SYS_cps    24
+#define SYS_chpr   25
